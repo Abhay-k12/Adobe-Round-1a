@@ -1,65 +1,63 @@
 from pdfminer.high_level import extract_pages
-from pdfminer.layout import LTTextContainer, LTTextBoxHorizontal
+from pdfminer.layout import LTTextContainer, LTTextBoxHorizontal, LTTextLineHorizontal, LAParams
 from pathlib import Path
 import re
+import logging
 from typing import Dict, List, Union
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 class PDFOutlineExtractor:
+    def __init__(self):
+        self.laparams = LAParams(
+            line_margin=0.5,
+            char_margin=2.0,
+            boxes_flow=0.5
+        )
+
     def extract_outline(self, pdf_path: Union[str, Path]) -> Dict:
-        """Extract hierarchical outline from PDF document"""
+        """Final robust PDF outline extractor with all fixes"""
         outlines = []
         title = ""
-        seen_texts = set()
         
         try:
-            # First pass to identify potential title from first page
-            first_page = next(extract_pages(pdf_path))
-            title = self._extract_title(first_page) or Path(pdf_path).stem
+            # Extract first page with layout analysis
+            first_page = next(extract_pages(pdf_path, laparams=self.laparams))
             
-            # Process all pages for headings
-            for page_num, page in enumerate(extract_pages(pdf_path), 1):
-                page_elements = []
-                
+            # Improved title extraction
+            title = self._extract_document_title(first_page) or Path(pdf_path).stem
+            logger.info(f"Using title: {title}")
+
+            # Process all pages
+            seen_texts = set()
+            for page_num, page in enumerate(extract_pages(pdf_path, laparams=self.laparams), 1):
                 for element in page:
-                    if isinstance(element, (LTTextBoxHorizontal, LTTextContainer)):
+                    if isinstance(element, (LTTextBoxHorizontal, LTTextContainer, LTTextLineHorizontal)):
                         text = self._clean_text(element.get_text())
-                        if text and len(text.split()) <= 30:  # Skip long paragraphs
-                            page_elements.append({
-                                'text': text,
-                                'bbox': (element.x0, element.y0, element.x1, element.y1),
-                                'font_size': self._get_avg_fontsize(element),
-                                'is_bold': self._is_bold(element),
-                                'is_centered': self._is_centered(element, page),
-                                'page': page_num
+                        if not text or text in seen_texts:
+                            continue
+                            
+                        if self._is_valid_heading(element, text, page):  # Pass page object here
+                            level = self._classify_heading(element, text)
+                            outlines.append({
+                                "level": level,
+                                "text": text,
+                                "page": page_num
                             })
-                
-                # Process elements in reading order (top to bottom)
-                page_elements.sort(key=lambda x: (-x['bbox'][1], x['bbox'][0]))
-                
-                for el in page_elements:
-                    if self._is_valid_heading(el) and el['text'] not in seen_texts:
-                        level = self._classify_heading(el)
-                        outlines.append({
-                            "level": level,
-                            "text": el['text'],
-                            "page": el['page']
-                        })
-                        seen_texts.add(el['text'])
+                            seen_texts.add(text)
             
-            # Post-processing to clean up results
-            outlines = self._post_process_outlines(outlines, title)
+            # Final fallback
+            if not outlines:
+                outlines = [{"level": "H1", "text": title, "page": 1}]
             
             return {
                 "title": title,
-                "outline": outlines or [{
-                    "level": "H1",
-                    "text": title,
-                    "page": 1
-                }]
+                "outline": outlines
             }
             
         except Exception as e:
-            print(f"Error processing {pdf_path}: {str(e)}")
+            logger.error(f"Critical error processing {pdf_path}: {str(e)}")
             return {
                 "title": Path(pdf_path).stem,
                 "outline": [{
@@ -69,148 +67,107 @@ class PDFOutlineExtractor:
                 }]
             }
 
-    def _extract_title(self, page) -> str:
-        """Extract the most likely document title from first page"""
-        candidates = []
+    def _extract_document_title(self, page) -> str:
+        """Final title extraction with multiple fallbacks"""
+        # Try centered large text first
         for element in page:
             if isinstance(element, (LTTextBoxHorizontal, LTTextContainer)):
                 text = self._clean_text(element.get_text())
-                if 3 <= len(text.split()) <= 10:
-                    candidates.append({
-                        'text': text,
-                        'size': self._get_avg_fontsize(element),
-                        'bold': self._is_bold(element),
-                        'centered': self._is_centered(element, page)
-                    })
+                if (len(text.split()) >= 3 and 
+                    self._get_avg_fontsize(element) > 14 and 
+                    self._is_centered(element, page)):
+                    return text
         
-        if candidates:
-            # Prefer large, bold, centered text at top of page
-            candidates.sort(key=lambda x: (
-                -x['size'],
-                -x['bold'],
-                -x['centered'],
-                -x['text'].count('\n')  # Fewer line breaks = more title-like
-            ))
-            return candidates[0]['text']
+        # Then try any large bold text
+        for element in page:
+            if isinstance(element, (LTTextBoxHorizontal, LTTextContainer)):
+                text = self._clean_text(element.get_text())
+                if (len(text.split()) >= 2 and 
+                    self._get_avg_fontsize(element) > 12 and 
+                    self._is_bold(element)):
+                    return text
+        
+        # Finally try first meaningful text
+        for element in page:
+            if isinstance(element, (LTTextBoxHorizontal, LTTextContainer)):
+                text = self._clean_text(element.get_text())
+                if len(text.split()) >= 2:
+                    return text
+        
         return ""
 
     def _clean_text(self, text: str) -> str:
-        """Normalize text by removing excessive whitespace and special chars"""
-        # First remove bullet characters
-        text = re.sub(r'[\u2022\u2023\u25E6\u2043\u2219•▪]', ' ', text)
-        
-        # Keep letters, numbers, basic punctuation and some special chars
-        text = re.sub(r'[^\w\s\-.,:;()\u2013\u2014]', '', text)  # Note the escaped hyphen
-        
-        # Normalize whitespace
+        """Final text cleaning that preserves meaningful content"""
         text = re.sub(r'\s+', ' ', text).strip()
-        return text
+        # Remove common artifacts but keep main content
+        text = re.sub(r'^[\W\d]+', '', text)
+        text = re.sub(r'[\W\d]+$', '', text)
+        return text if len(text) > 2 else ""
 
     def _get_avg_fontsize(self, element) -> float:
-        """Calculate average font size of text elements"""
-        sizes = []
-        for obj in getattr(element, '_objs', []):
-            if hasattr(obj, 'size'):
-                sizes.append(obj.size)
-        return sum(sizes)/len(sizes) if sizes else 10
+        """Safe font size calculation"""
+        sizes = [obj.size for obj in getattr(element, '_objs', []) if hasattr(obj, 'size')]
+        return sum(sizes)/len(sizes) if sizes else 0
 
     def _is_bold(self, element) -> bool:
-        """Check if text contains bold formatting"""
+        """Comprehensive bold detection"""
         for obj in getattr(element, '_objs', []):
-            if getattr(obj, 'fontname', '').lower().endswith('bold'):
-                return True
-            if getattr(obj, 'fontname', '').lower().find('bold') != -1:
+            fontname = getattr(obj, 'fontname', '').lower()
+            if any(x in fontname for x in ['bold', 'black', 'heavy', 'demi']):
                 return True
         return False
 
     def _is_centered(self, element, page) -> bool:
-        """Check if element is centered on page"""
+        """Safe centering check with page reference"""
         if not hasattr(page, 'width'):
             return False
-        page_center = page.width / 2
         elem_center = (element.x0 + element.x1) / 2
-        return abs(elem_center - page_center) < 20
+        page_center = page.width / 2
+        return abs(elem_center - page_center) < (page.width * 0.3)
 
-    def _is_valid_heading(self, element: Dict) -> bool:
-        """Determine if element should be considered a heading"""
-        text = element['text']
-        words = text.split()
+    def _is_valid_heading(self, element, text: str, page) -> bool:
+        """Final heading validation with all fixes"""
+        # Quick rejection
+        if len(text) < 3 or len(text.split()) > 10:
+            return False
         
-        # Basic filters
-        if len(words) > 15 or len(words) < 2:
+        # Blacklist patterns
+        blacklist = ['page', 'continued', 'copyright', '©', 'http://', 'www.']
+        if any(x in text.lower() for x in blacklist):
             return False
-        if text.isdigit() or re.match(r'^\d+\.?\d*$', text):
-            return False
-            
-        # Formatting clues
+        
+        # Formatting checks
+        font_size = self._get_avg_fontsize(element)
+        is_bold = self._is_bold(element)
+        is_centered = self._is_centered(element, page)  # Use passed page parameter
+        
+        # Content patterns
         is_upper = text == text.upper()
-        is_bold = element['is_bold']
-        large_font = element['font_size'] > 12
-        is_centered = element['is_centered']
+        starts_with_num = re.match(r'^\d+[\.\)]', text)
+        is_section = re.match(r'^(section|chapter|part|clause)\b', text, re.I)
         
-        # Structural patterns
-        starts_with_number = re.match(r'^\d+\.\d*', text)  # e.g. "1.1 Introduction"
-        starts_with_heading_word = re.match(
-            r'^(chapter|section|part|appendix|article|clause|paragraph|table|figure)\b', 
-            text.lower()
-        )
-        ends_with_colon = text.strip().endswith(':')
-        
+        # Final validation
         return any([
-            is_upper and len(words) <= 8,
-            is_bold and large_font,
-            is_centered and large_font,
-            starts_with_number,
-            starts_with_heading_word,
-            ends_with_colon and large_font
+            is_upper and len(text.split()) <= 5,
+            is_bold and font_size > 11,
+            is_centered and font_size > 12,
+            starts_with_num,
+            is_section
         ])
-
-    def _classify_heading(self, element: Dict) -> str:
-        """Determine heading level based on formatting and content"""
-        text = element['text']
+    
+    def _classify_heading(self, element, text: str) -> str:
+        """Final heading classification"""
+        font_size = self._get_avg_fontsize(element)
+        is_bold = self._is_bold(element)
         
-        # H1: Largest, most prominent headings
-        if (element['font_size'] > 14 and element['is_bold']) or text == text.upper():
+        if (font_size >= 16 and is_bold) or text == text.upper():
             return "H1"
-        if re.match(r'^(chapter|part)\b', text, re.IGNORECASE):
+        if re.match(r'^(chapter|part)\b', text, re.I):
             return "H1"
-            
-        # H2: Sub-headings with numbering or medium size
-        if re.match(r'^\d+\.\d+\s', text):  # e.g. "1.1 Introduction"
+        if re.match(r'^\d+\.\d+\s', text):
             return "H2"
-        if element['font_size'] > 12 or (element['is_bold'] and not element['is_centered']):
+        if font_size >= 12 or is_bold:
             return "H2"
-            
-        # H3: Smaller headings or those ending with colons
-        if text.strip().endswith(':'):
-            return "H3"
-        if re.match(r'^\d+\.\d+\.\d+\s', text):  # e.g. "1.1.1 Details"
-            return "H3"
-            
-        # Default to H2 for other valid headings
-        return "H2"
+        return "H3"
 
-    def _post_process_outlines(self, outlines: List[Dict], title: str) -> List[Dict]:
-        """Clean up and validate the extracted outlines"""
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_outlines = []
-        for item in outlines:
-            text = item['text']
-            if text not in seen:
-                seen.add(text)
-                unique_outlines.append(item)
-        
-        # Ensure first heading matches document title if similar
-        if unique_outlines and self._text_similarity(title, unique_outlines[0]['text']) > 0.7:
-            unique_outlines[0]['text'] = title
-        
-        return unique_outlines
 
-    def _text_similarity(self, text1: str, text2: str) -> float:
-        """Calculate simple text similarity ratio (0-1)"""
-        words1 = set(text1.lower().split())
-        words2 = set(text2.lower().split())
-        intersection = words1.intersection(words2)
-        union = words1.union(words2)
-        return len(intersection) / len(union) if union else 0
