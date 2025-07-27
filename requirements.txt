@@ -1,0 +1,2 @@
+pdfminer.six==20221105
+jsonschema==4.20.0
