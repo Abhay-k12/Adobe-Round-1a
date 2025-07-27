@@ -1,8 +1,6 @@
-import os
 import json
 from pathlib import Path
-from .heading_classifier import PDFOutlineExtractor
-from .utils import validate_json_schema
+from heading_classifier import PDFOutlineExtractor
 
 def process_pdfs():
     input_dir = Path("/app/input")
@@ -14,13 +12,13 @@ def process_pdfs():
     for pdf_file in input_dir.glob("*.pdf"):
         result = extractor.extract_outline(pdf_file)
         
-        # Validate against JSON schema
-        validate_json_schema(result)
-        
-        # Save output
-        output_file = output_dir / f"{pdf_file.stem}.json"
-        with open(output_file, "w") as f:
-            json.dump(result, f, indent=2)
+        # Final validation
+        if not result["title"] or len(result["title"].split()) > 20:
+            result["title"] = Path(pdf_file).stem
+            
+        with open(output_dir / f"{pdf_file.stem}.json", "w") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
 
 if __name__ == "__main__":
     process_pdfs()
+    
