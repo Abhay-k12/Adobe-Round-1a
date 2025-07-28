@@ -21,11 +21,11 @@ OUTLINE_SCHEMA = {
 }
 
 def validate_json_schema(data):
-    # Ensure outline is always a list of proper objects
+    # Ensuring outline is always a list of proper objects to avoid invalid detections
     if not isinstance(data.get("outline"), list):
         data["outline"] = []
     
-    # Validate each outline item
+    # Validating each outline item that has been generated.
     valid_outline = []
     for item in data["outline"]:
         if isinstance(item, dict) and all(k in item for k in ["level", "text", "page"]):

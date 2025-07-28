@@ -7,8 +7,10 @@ import re
 import logging
 from typing import Dict, List, Union
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class PDFOutlineExtractor:
     def __init__(self, ocr_languages: str = "eng"):
@@ -21,6 +23,7 @@ class PDFOutlineExtractor:
             all_texts=True
         )
 
+
     def extract_outline(self, pdf_path: Union[str, Path]) -> Dict:
         outlines = []
         title = ""
@@ -32,7 +35,6 @@ class PDFOutlineExtractor:
                 classification = self._classify_page(page)
 
                 if classification in ["card", "tabular"]:
-                    logger.info(f"Page {page_num} classified as {classification.upper()}. Skipping headings.")
                     continue
 
                 found_heading = False
@@ -50,7 +52,7 @@ class PDFOutlineExtractor:
                         found_heading = True
 
                 if not found_heading:
-                    # Fallback to OCR
+                    # *** using OCR if no heading found ***
                     ocr_text = self._ocr_page(str(pdf_path), page_num)
                     for line in ocr_text.split('\n'):
                         line = self._clean_text(line)
@@ -72,11 +74,13 @@ class PDFOutlineExtractor:
                 "outline": [{"level": "H1", "text": Path(pdf_path).stem, "page": 1}]
             }
 
+
     def _ocr_page(self, pdf_path: str, page_num: int) -> str:
         images = convert_from_path(pdf_path, first_page=page_num, last_page=page_num)
         if images:
             return pytesseract.image_to_string(images[0], lang=self.ocr_languages)
         return ""
+
 
     def _classify_page(self, page) -> str:
         text_elems = [e for e in page if isinstance(e, LTTextContainer)]
@@ -94,6 +98,7 @@ class PDFOutlineExtractor:
             return "tabular"
         return "normal"
 
+
     def _extract_title_fallback(self, page) -> str:
         for element in page:
             if isinstance(element, (LTTextBoxHorizontal, LTTextContainer)):
@@ -102,13 +107,16 @@ class PDFOutlineExtractor:
                     return text
         return ""
 
+
     def _clean_text(self, text: str) -> str:
         text = re.sub(r'\s+', ' ', text.strip())
         return text
 
+
     def _get_avg_fontsize(self, element) -> float:
         sizes = [obj.size for obj in getattr(element, '_objs', []) if hasattr(obj, 'size')]
         return sum(sizes)/len(sizes) if sizes else 0
+
 
     def _is_bold(self, element) -> bool:
         for obj in getattr(element, '_objs', []):
@@ -117,6 +125,7 @@ class PDFOutlineExtractor:
                 return True
         return False
 
+
     def _is_centered(self, element, page) -> bool:
         if not hasattr(page, 'width'):
             return False
@@ -124,12 +133,13 @@ class PDFOutlineExtractor:
         page_center = page.width / 2
         return abs(elem_center - page_center) < (page.width * 0.3)
 
+
     def _is_valid_heading(self, element, text: str, page) -> bool:
         if len(text) < 3 or len(text.split()) > 12:
             return False
-        if re.fullmatch(r'[-\s.]{5,}', text):  # reject dashed/line-only text
+        if re.fullmatch(r'[-\s.]{5,}', text):  # ***reject dashed/line-only text***
             return False
-        if re.fullmatch(r'(\d+\s?){2,}', text):  # repeated digit-only
+        if re.fullmatch(r'(\d+\s?){2,}', text):  # ***repeated digit-only***
             return False
         if any(x in text.lower() for x in ['page', 'continued', 'copyright', '©']):
             return False
@@ -149,6 +159,7 @@ class PDFOutlineExtractor:
             is_section
         ])
 
+
     def _is_valid_heading_from_text(self, text: str) -> bool:
         if not text or len(text.split()) > 12 or len(text) < 5:
             return False
@@ -159,6 +170,7 @@ class PDFOutlineExtractor:
         if any(x in text.lower() for x in ['page', 'continued', 'copyright', '©']):
             return False
         return True
+
 
     def _classify_heading(self, element, text: str) -> str:
         font_size = self._get_avg_fontsize(element)
