@@ -1,5 +1,5 @@
 from pdfminer.high_level import extract_pages
-from pdfminer.layout import LTTextContainer, LTTextBoxHorizontal, LTTextLineHorizontal, LAParams
+from pdfminer.layout import LTTextContainer, LTTextBoxHorizontal, LTTextLineHorizontal, LTRect, LTLine, LAParams
 from pathlib import Path
 import re
 import logging
@@ -13,51 +13,51 @@ class PDFOutlineExtractor:
         self.laparams = LAParams(
             line_margin=0.5,
             char_margin=2.0,
-            boxes_flow=0.5
+            boxes_flow=0.5,
+            detect_vertical=True,
+            all_texts=True
         )
 
     def extract_outline(self, pdf_path: Union[str, Path]) -> Dict:
-        """Final robust PDF outline extractor with all fixes"""
         outlines = []
         title = ""
-        
         try:
-            # Extract first page with layout analysis
-            first_page = next(extract_pages(pdf_path, laparams=self.laparams))
-            
-            # Improved title extraction
-            title = self._extract_document_title(first_page) or Path(pdf_path).stem
-            logger.info(f"Using title: {title}")
+            pages = list(extract_pages(pdf_path, laparams=self.laparams))
+            title = self._extract_title_fallback(pages[0]) if pages else Path(pdf_path).stem
 
-            # Process all pages
-            seen_texts = set()
-            for page_num, page in enumerate(extract_pages(pdf_path, laparams=self.laparams), 1):
+            for page_num, page in enumerate(pages, 1):
+                classification = self._classify_page(page)
+
+                if classification == "card":
+                    logger.info(f"Page {page_num} classified as CARD. Skipping headings.")
+                    continue
+
+                if classification == "tabular":
+                    logger.info(f"Page {page_num} classified as TABULAR. Skipping headings.")
+                    continue
+
                 for element in page:
                     if isinstance(element, (LTTextBoxHorizontal, LTTextContainer, LTTextLineHorizontal)):
                         text = self._clean_text(element.get_text())
-                        if not text or text in seen_texts:
+                        if not text or not self._is_valid_heading(element, text, page):
                             continue
-                            
-                        if self._is_valid_heading(element, text, page):  # Pass page object here
-                            level = self._classify_heading(element, text)
-                            outlines.append({
-                                "level": level,
-                                "text": text,
-                                "page": page_num
-                            })
-                            seen_texts.add(text)
-            
-            # Final fallback
+                        level = self._classify_heading(element, text)
+                        outlines.append({
+                            "level": level,
+                            "text": text,
+                            "page": page_num
+                        })
+
             if not outlines:
                 outlines = [{"level": "H1", "text": title, "page": 1}]
-            
+
             return {
                 "title": title,
                 "outline": outlines
             }
-            
+
         except Exception as e:
-            logger.error(f"Critical error processing {pdf_path}: {str(e)}")
+            logger.error(f"Error processing {pdf_path}: {e}")
             return {
                 "title": Path(pdf_path).stem,
                 "outline": [{
@@ -67,58 +67,51 @@ class PDFOutlineExtractor:
                 }]
             }
 
-    def _extract_document_title(self, page) -> str:
-        """Final title extraction with multiple fallbacks"""
-        # Try centered large text first
+    def _classify_page(self, page) -> str:
+        text_elems = [e for e in page if isinstance(e, LTTextContainer)]
+        total_text = sum(len(e.get_text().strip()) for e in text_elems)
+
+        if total_text < 300:
+            for elem in text_elems:
+                text = elem.get_text().lower()
+                if any(w in text for w in ["you're invited", "hope to see", "party", "rsvp"]):
+                    return "card"
+                if abs(((elem.x0 + elem.x1)/2) - (page.width/2)) < 50:
+                    return "card"
+
+        line_count = sum(1 for e in page if isinstance(e, (LTRect, LTLine)))
+        short_text_count = sum(1 for e in text_elems if len(e.get_text().strip()) < 20)
+
+        if line_count > 20 and short_text_count > 10:
+            return "tabular"
+
+        return "normal"
+
+    def _extract_title_fallback(self, page) -> str:
         for element in page:
             if isinstance(element, (LTTextBoxHorizontal, LTTextContainer)):
                 text = self._clean_text(element.get_text())
-                if (len(text.split()) >= 3 and 
-                    self._get_avg_fontsize(element) > 14 and 
-                    self._is_centered(element, page)):
+                if len(text.split()) >= 3:
                     return text
-        
-        # Then try any large bold text
-        for element in page:
-            if isinstance(element, (LTTextBoxHorizontal, LTTextContainer)):
-                text = self._clean_text(element.get_text())
-                if (len(text.split()) >= 2 and 
-                    self._get_avg_fontsize(element) > 12 and 
-                    self._is_bold(element)):
-                    return text
-        
-        # Finally try first meaningful text
-        for element in page:
-            if isinstance(element, (LTTextBoxHorizontal, LTTextContainer)):
-                text = self._clean_text(element.get_text())
-                if len(text.split()) >= 2:
-                    return text
-        
         return ""
 
     def _clean_text(self, text: str) -> str:
-        """Final text cleaning that preserves meaningful content"""
-        text = re.sub(r'\s+', ' ', text).strip()
-        # Remove common artifacts but keep main content
-        text = re.sub(r'^[\W\d]+', '', text)
-        text = re.sub(r'[\W\d]+$', '', text)
-        return text if len(text) > 2 else ""
+        text = re.sub(r'\s+', ' ', text.strip())
+        text = text.strip(" .-:\u2022")  # remove leading/trailing bullets, dashes, etc.
+        return text
 
     def _get_avg_fontsize(self, element) -> float:
-        """Safe font size calculation"""
         sizes = [obj.size for obj in getattr(element, '_objs', []) if hasattr(obj, 'size')]
         return sum(sizes)/len(sizes) if sizes else 0
 
     def _is_bold(self, element) -> bool:
-        """Comprehensive bold detection"""
         for obj in getattr(element, '_objs', []):
             fontname = getattr(obj, 'fontname', '').lower()
-            if any(x in fontname for x in ['bold', 'black', 'heavy', 'demi']):
+            if any(x in fontname for x in ['bold', 'black', 'heavy']):
                 return True
         return False
 
     def _is_centered(self, element, page) -> bool:
-        """Safe centering check with page reference"""
         if not hasattr(page, 'width'):
             return False
         elem_center = (element.x0 + element.x1) / 2
@@ -126,27 +119,27 @@ class PDFOutlineExtractor:
         return abs(elem_center - page_center) < (page.width * 0.3)
 
     def _is_valid_heading(self, element, text: str, page) -> bool:
-        """Final heading validation with all fixes"""
-        # Quick rejection
-        if len(text) < 3 or len(text.split()) > 10:
+        if len(text) < 3 or len(text.split()) > 12:
             return False
-        
-        # Blacklist patterns
-        blacklist = ['page', 'continued', 'copyright', '©', 'http://', 'www.']
-        if any(x in text.lower() for x in blacklist):
+
+        # Filter known bad patterns
+        if re.fullmatch(r'[-._=•\s]{5,}', text):  # dashes, dots, bullets
             return False
-        
-        # Formatting checks
+        if re.fullmatch(r'(\d+\s+){2,}\d+', text):  # repeated numbers like "2 2 2 2"
+            return False
+        if re.fullmatch(r'\d{6,}', text):  # long unbroken numbers like "10101010"
+            return False
+
+        if any(x in text.lower() for x in ['page', 'continued', 'copyright', '©']):
+            return False
+
         font_size = self._get_avg_fontsize(element)
         is_bold = self._is_bold(element)
-        is_centered = self._is_centered(element, page)  # Use passed page parameter
-        
-        # Content patterns
+        is_centered = self._is_centered(element, page)
         is_upper = text == text.upper()
         starts_with_num = re.match(r'^\d+[\.\)]', text)
         is_section = re.match(r'^(section|chapter|part|clause)\b', text, re.I)
-        
-        # Final validation
+
         return any([
             is_upper and len(text.split()) <= 5,
             is_bold and font_size > 11,
@@ -154,12 +147,10 @@ class PDFOutlineExtractor:
             starts_with_num,
             is_section
         ])
-    
+
     def _classify_heading(self, element, text: str) -> str:
-        """Final heading classification"""
         font_size = self._get_avg_fontsize(element)
         is_bold = self._is_bold(element)
-        
         if (font_size >= 16 and is_bold) or text == text.upper():
             return "H1"
         if re.match(r'^(chapter|part)\b', text, re.I):
@@ -169,5 +160,3 @@ class PDFOutlineExtractor:
         if font_size >= 12 or is_bold:
             return "H2"
         return "H3"
-
-
