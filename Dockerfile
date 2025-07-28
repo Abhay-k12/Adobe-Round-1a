@@ -1,9 +1,10 @@
 FROM python:3.10-slim
 
-# Set env to ensure consistent behavior
+# ***Setting environment to ensure consistent behavior and avois any conflict***
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system packages: poppler (for pdf2image) and Tesseract + language packs
+
+# ***Installing system packages that are required in our solution***
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         poppler-utils \
@@ -20,15 +21,15 @@ RUN apt-get update && \
         libxrender1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# ***Installing all the python dependencies present into requirements.txt***
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy source code
+# ***Copying the source code for execution***
 COPY src /app/src
 COPY input /app/input
 COPY output /app/output
 WORKDIR /app
 
-# Run your extractor
+# ***Runing the extractor file that holds the main logic***
 CMD ["python", "src/extractor.py"]
