@@ -8,16 +8,6 @@
 ---
 <br>
 
-<div align="center">
-
-  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/Tesseract-5D87BF?style=for-the-badge&logo=tesseract&logoColor=white" alt="Tesseract OCR" />
-  <img src="https://img.shields.io/badge/PDFMiner-FEC606?style=for-the-badge&logo=adobeacrobatreader&logoColor=black" alt="PDFMiner" />
-  <img src="https://img.shields.io/badge/Flask-000000?style=for-the-badge&logo=flask&logoColor=white" alt="Flask" />
-  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
-
-</div>
-
 
 ## 🧠 Overview
 
@@ -45,7 +35,7 @@ We focused on a **heuristic-driven, multilingual-compatible** pipeline to ensure
 ## 📊 System Architecture & Flow
 
 <p align="center">
-  <img src="assets/flowchart.png" alt="PDF Outline Extraction Flowchart" width="800"/>
+  <img src="assets/flowchart.png" alt="PDF Outline Extraction Flowchart" width="500"/>
 </p>
 
 ---
@@ -83,11 +73,19 @@ pdf_outline_extractor/
 
 ## 🛠️ Tech Stack
 
+<div align="center">
+
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/Tesseract-5D87BF?style=for-the-badge&logo=tesseract&logoColor=white" alt="Tesseract OCR" />
+  <img src="https://img.shields.io/badge/PDFMiner-FEC606?style=for-the-badge&logo=adobeacrobatreader&logoColor=black" alt="PDFMiner" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
+
+</div>
+
 - **Python 3.10** – Primary language  
 - **PDFMiner.six** – Core PDF layout extraction engine  
 - **Tesseract OCR** – Used as fallback for multilingual or image-heavy pages  
-- **Docker** – Ensures <200MB image and completely offline execution  
-- ❌ No numpy / pandas – Reduced bloat, memory optimized  
+- **Docker** – Ensures <200MB image and completely offline execution    
 
 ---
 <br>
