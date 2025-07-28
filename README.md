@@ -200,11 +200,6 @@ This ensures that we can still extract structure even from low-quality or multil
       <td>Lack of layout structure</td>
       <td>Fallback: use first large title only</td>
     </tr>
-    <tr>
-      <td>Slightly exceeds 10s on scanned multilingual PDFs</td>
-      <td>OCR time overhead</td>
-      <td>Acceptable in rare cases</td>
-    </tr>
   </tbody>
 </table>
 
